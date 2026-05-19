@@ -4,7 +4,7 @@
 >
 > This codebase was developed with assistance from [Claude](https://claude.ai) (Anthropic) and [Codex](https://openai.com) (OpenAI). AI-generated code may contain subtle bugs or incorrect assumptions — review outputs carefully and validate against known results before drawing biological conclusions.
 
-`neocount` is a computational liquid-biopsy tool that scans BAM/CRAM files for cancer-associated [**neomers**](https://neomerdb.com) — reference-absent k-mers reintroduced by somatic mutation — and converts sparse read-level evidence into normalized pan-cancer biomarker features.
+`neocount` is a computational liquid-biopsy tool that scans BAM/CRAM files for cancer-associated [neomers](https://neomerdb.com) — reference-absent k-mers reintroduced by somatic mutation — and converts sparse read-level evidence into normalized pan-cancer biomarker features.
 
 ## Install
 
@@ -37,7 +37,6 @@ Build time and RAM figures are theoretical estimates.
 | 16 | 6 GB | < 60 min | ~1.45 GB | Future dense-counting target |
 | 17 | >20 GB | not supported | ~8–16 GB | Requires uint64 dtype + external sort (future) |
 
-Use local SSD for k≥15 — random binary search over NFS reduces throughput to < 10% of local.
 
 ## Query
 
@@ -94,7 +93,7 @@ sample  bam  db  k  cancer_type  organ  variant_class  af_bin  af_bin_label  pai
 | `af_bin_label` | Human-readable AF range (`<0.001`, `0.001-0.01`, …, `Unknown`) |
 | `pair_count` | Read pairs where neomers from this group appear in **both** mates |
 | `norm_region` | Normalisation mode: `chr2q+chr19p` or `autosomes` |
-| `norm_reads` | Total filtered reads in the normalisation region |
+| `norm_reads` | Total filtered reads in the normalization region |
 | `neomers` | Comma-separated list of exact neomer sequences matched in this group |
 
 Only groups with `pair_count > 0` are emitted. The primary downstream signal is:
