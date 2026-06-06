@@ -212,8 +212,7 @@ def _scan_reads(bam_path: str, db: NmerDB, args):
                 else:
                     n_tlen_filtered += 1
             else:
-                tlen = abs(read.template_length)
-                if tlen and tlen > 2 * len(seq) - db.k:
+                if not _tlen_ok(abs(read.template_length), len(seq), db.k):
                     n_tlen_filtered += 1
                 else:
                     n_evicted += _enqueue_read(pending, qname, seq, args.max_pending)

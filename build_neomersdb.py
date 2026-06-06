@@ -16,7 +16,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ndb import (MAGIC, HEADER_STRUCT, encode_kmer, af_to_bin,
+from ndb import (MAGIC, HEADER_STRUCT, AF_BIN_META, encode_kmer, af_to_bin,
                  normalize_variant_class)
 
 _VERSION = 'v0.1'
@@ -196,16 +196,6 @@ def _compute_group_stats(kmer_arr, group_arr, n_groups: int, unique_kmers, kmer_
     return n_kmers, n_exclusive
 
 
-_AF_BIN_META = [
-    {'id': 0, 'label': '<0.001',     'max_af': 0.001},
-    {'id': 1, 'label': '0.001-0.01', 'max_af': 0.01},
-    {'id': 2, 'label': '0.01-0.1',   'max_af': 0.1},
-    {'id': 3, 'label': '0.1-0.5',    'max_af': 0.5},
-    {'id': 4, 'label': '>=0.5',      'max_af': 1.0},
-    {'id': 5, 'label': 'Unknown',     'max_af': None},
-]
-
-
 def _build_catalog_json(in_path: str, canonical_groups: dict, build_ts: int,
                         n_rows_raw: int, process_stats: dict, build_stats: dict) -> bytes:
     """Serialise group catalog + build metadata to JSON bytes."""
@@ -230,7 +220,7 @@ def _build_catalog_json(in_path: str, canonical_groups: dict, build_ts: int,
     except metadata.PackageNotFoundError:
         numba_ver = 'absent'
     catalog = {
-        'af_bins': _AF_BIN_META,
+        'af_bins': AF_BIN_META,
         'groups': group_list,
         'metadata': {
             'build_python': platform.python_version(),

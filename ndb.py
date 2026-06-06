@@ -28,6 +28,12 @@ _DECODE = 'ACGT'
 _AF_BREAKS = (0.001, 0.01, 0.1, 0.5)
 _VC_NORM = {'Intergenic Region': 'IGR'}
 AF_BIN_LABELS = ['<0.001', '0.001-0.01', '0.01-0.1', '0.1-0.5', '>=0.5', 'Unknown']
+# Single source of truth for AF-bin catalog metadata: derived from the same
+# breaks/labels used by af_to_bin so the builder and reader cannot drift apart.
+AF_BIN_META = [
+    {'id': i, 'label': label, 'max_af': max_af}
+    for i, (label, max_af) in enumerate(zip(AF_BIN_LABELS, (*_AF_BREAKS, 1.0, None)))
+]
 
 _BASE_TO_BITS = np.full(256, 255, dtype=np.uint8)
 for _base, _bits in ((ord('A'), 0), (ord('C'), 1), (ord('G'), 2), (ord('T'), 3),
@@ -35,7 +41,7 @@ for _base, _bits in ((ord('A'), 0), (ord('C'), 1), (ord('G'), 2), (ord('T'), 3),
     _BASE_TO_BITS[_base] = _bits
 
 __all__ = [
-    'MAGIC', 'HEADER_STRUCT', 'AF_BIN_LABELS',
+    'MAGIC', 'HEADER_STRUCT', 'AF_BIN_LABELS', 'AF_BIN_META',
     'encode_kmer', 'decode_kmer', 'af_to_bin', 'normalize_variant_class',
     'NmerDB', 'sliding_kmers', 'lookup', 'lookup_grouped',
     'build_bloom_intmix', 'process_pair_batch_dense',
@@ -257,13 +263,18 @@ if _HAS_NUMBA:
         return epoch
 
 
+def _bloom_h1_h2_py(val: int, seed: int) -> tuple[int, int]:
+    """Compute the two base hashes for double-hashing (pure-Python fallback)."""
+    h1 = _mix64_py(val ^ seed)
+    h2 = _mix64_py((val + 0x9e3779b97f4a7c15) ^ seed) | 1
+    return h1, h2
+
+
 def _bloom_query_mask_intmix_py(queries: np.ndarray, data: np.ndarray,
                                 n_bits: int, n_hashes: int, seed: int) -> np.ndarray:
     out = np.empty(len(queries), dtype=bool)
     for q_idx, q in enumerate(queries):
-        val = int(q)
-        h1 = _mix64_py(val ^ seed)
-        h2 = _mix64_py((val + 0x9e3779b97f4a7c15) ^ seed) | 1
+        h1, h2 = _bloom_h1_h2_py(int(q), seed)
         present = True
         for i in range(n_hashes):
             bit = (h1 + i * h2) % n_bits
@@ -277,9 +288,7 @@ def _bloom_query_mask_intmix_py(queries: np.ndarray, data: np.ndarray,
 def _bloom_set_many_intmix_py(kmers: np.ndarray, data: np.ndarray,
                               n_bits: int, n_hashes: int, seed: int) -> None:
     for q in kmers:
-        val = int(q)
-        h1 = _mix64_py(val ^ seed)
-        h2 = _mix64_py((val + 0x9e3779b97f4a7c15) ^ seed) | 1
+        h1, h2 = _bloom_h1_h2_py(int(q), seed)
         for i in range(n_hashes):
             bit = (h1 + i * h2) % n_bits
             data[bit >> 3] |= np.uint8(1 << (bit & 7))
