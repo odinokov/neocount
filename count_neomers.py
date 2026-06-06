@@ -13,7 +13,7 @@ import pysam
 
 from ndb import NmerDB, process_pair_batch_dense, decode_kmer, AF_BIN_LABELS
 
-_VERSION = 'v0.1'
+_VERSION = 'v0.2'
 _EXCLUDE_FLAGS = 4 | 256 | 512 | 1024 | 2048  # unmapped, secondary, qcfail, dup, supplementary
 _DEFAULT_NORM_REGIONS = (
     'chr2:95000000-242000000,'

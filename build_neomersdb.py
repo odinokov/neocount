@@ -19,7 +19,7 @@ import numpy as np
 from ndb import (MAGIC, HEADER_STRUCT, AF_BIN_META, encode_kmer, af_to_bin,
                  normalize_variant_class)
 
-_VERSION = 'v0.1'
+_VERSION = 'v0.2'
 _CHUNK = 5_000_000   # rows per numpy chunk during streaming
 
 
