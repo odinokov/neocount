@@ -1,4 +1,5 @@
 """Shared core: encoding, dense lookup, bloom helpers, mmap-backed NmerDB loader."""
+
 import json
 import math
 import mmap
@@ -9,42 +10,75 @@ import numpy as np
 
 try:
     from numba import njit as _njit
+
     _HAS_NUMBA = True
 except ImportError:
     _HAS_NUMBA = False
     _njit = None
 
 MAGIC = b"NMERDB\x00\x01"
-HEADER_STRUCT = struct.Struct('<8sBBBBQIIIQQIIII')
-_Header = namedtuple('_Header', (
-    'magic', 'ver_maj', 'ver_min', 'k', 'dtype',
-    'n_entries', 'n_groups', 'cat_bytes', 'bloom_bytes',
-    'kmer_off', 'group_off', 'flags',
-    'source_crc32', 'build_timestamp', 'n_unique',
-))
+HEADER_STRUCT = struct.Struct("<8sBBBBQIIIQQIIII")
+_Header = namedtuple(
+    "_Header",
+    (
+        "magic",
+        "ver_maj",
+        "ver_min",
+        "k",
+        "dtype",
+        "n_entries",
+        "n_groups",
+        "cat_bytes",
+        "bloom_bytes",
+        "kmer_off",
+        "group_off",
+        "flags",
+        "source_crc32",
+        "build_timestamp",
+        "n_unique",
+    ),
+)
 
-_ENCODE = {'A': 0, 'C': 1, 'G': 2, 'T': 3}
-_DECODE = 'ACGT'
+_ENCODE = {"A": 0, "C": 1, "G": 2, "T": 3}
+_DECODE = "ACGT"
 _AF_BREAKS = (0.001, 0.01, 0.1, 0.5)
-_VC_NORM = {'Intergenic Region': 'IGR'}
-AF_BIN_LABELS = ['<0.001', '0.001-0.01', '0.01-0.1', '0.1-0.5', '>=0.5', 'Unknown']
+_VC_NORM = {"Intergenic Region": "IGR"}
+AF_BIN_LABELS = ["<0.001", "0.001-0.01", "0.01-0.1", "0.1-0.5", ">=0.5", "Unknown"]
 # Single source of truth for AF-bin catalog metadata: derived from the same
 # breaks/labels used by af_to_bin so the builder and reader cannot drift apart.
 AF_BIN_META = [
-    {'id': i, 'label': label, 'max_af': max_af}
-    for i, (label, max_af) in enumerate(zip(AF_BIN_LABELS, (*_AF_BREAKS, 1.0, None)))
+    {"id": i, "label": label, "max_af": max_af}
+    for i, (label, max_af) in enumerate(zip(AF_BIN_LABELS, (*_AF_BREAKS, 1.0, None), strict=True))
 ]
 
 _BASE_TO_BITS = np.full(256, 255, dtype=np.uint8)
-for _base, _bits in ((ord('A'), 0), (ord('C'), 1), (ord('G'), 2), (ord('T'), 3),
-                     (ord('a'), 0), (ord('c'), 1), (ord('g'), 2), (ord('t'), 3)):
+for _base, _bits in (
+    (ord("A"), 0),
+    (ord("C"), 1),
+    (ord("G"), 2),
+    (ord("T"), 3),
+    (ord("a"), 0),
+    (ord("c"), 1),
+    (ord("g"), 2),
+    (ord("t"), 3),
+):
     _BASE_TO_BITS[_base] = _bits
 
 __all__ = [
-    'MAGIC', 'HEADER_STRUCT', 'AF_BIN_LABELS', 'AF_BIN_META',
-    'encode_kmer', 'decode_kmer', 'af_to_bin', 'normalize_variant_class',
-    'NmerDB', 'sliding_kmers', 'lookup', 'lookup_grouped',
-    'build_bloom_intmix', 'process_pair_batch_dense',
+    "MAGIC",
+    "HEADER_STRUCT",
+    "AF_BIN_LABELS",
+    "AF_BIN_META",
+    "encode_kmer",
+    "decode_kmer",
+    "af_to_bin",
+    "normalize_variant_class",
+    "NmerDB",
+    "sliding_kmers",
+    "lookup",
+    "lookup_grouped",
+    "build_bloom_intmix",
+    "process_pair_batch_dense",
 ]
 
 
@@ -67,7 +101,7 @@ def decode_kmer(val: int, k: int) -> str:
     for _ in range(k):
         chars.append(_DECODE[val & 3])
         val >>= 2
-    return ''.join(reversed(chars))
+    return "".join(reversed(chars))
 
 
 def af_to_bin(af) -> int:
@@ -89,22 +123,23 @@ def normalize_variant_class(vc: str) -> str:
     return _VC_NORM.get(vc, vc)
 
 
-_MIX_CONST_1 = np.uint64(0xbf58476d1ce4e5b9)
-_MIX_CONST_2 = np.uint64(0x94d049bb133111eb)
-_MIX_SEED_CONST = np.uint64(0x9e3779b97f4a7c15)
+_MIX_CONST_1 = np.uint64(0xBF58476D1CE4E5B9)
+_MIX_CONST_2 = np.uint64(0x94D049BB133111EB)
+_MIX_SEED_CONST = np.uint64(0x9E3779B97F4A7C15)
 
 
 def _mix64_py(x: int) -> int:
     x &= 0xFFFFFFFFFFFFFFFF
     x ^= x >> 30
-    x = (x * 0xbf58476d1ce4e5b9) & 0xFFFFFFFFFFFFFFFF
+    x = (x * 0xBF58476D1CE4E5B9) & 0xFFFFFFFFFFFFFFFF
     x ^= x >> 27
-    x = (x * 0x94d049bb133111eb) & 0xFFFFFFFFFFFFFFFF
+    x = (x * 0x94D049BB133111EB) & 0xFFFFFFFFFFFFFFFF
     x ^= x >> 31
     return x & 0xFFFFFFFFFFFFFFFF
 
 
 if _HAS_NUMBA:
+
     @_njit(cache=True)
     def _mix64_nb(x):
         x = np.uint64(x)
@@ -148,8 +183,9 @@ if _HAS_NUMBA:
                 data[byte_idx] |= np.uint8(1 << (bit & np.uint64(7)))
 
     @_njit(cache=True)
-    def _mark_groups_from_seq_nb(seqs, row, length, k, lookup_start, lookup_count,
-                                 group_arr, seen_group, epoch):
+    def _mark_groups_from_seq_nb(
+        seqs, row, length, k, lookup_start, lookup_count, group_arr, seen_group, epoch
+    ):
         mask = np.uint32((1 << (2 * k)) - 1)
         cur = np.uint32(0)
         valid = 0
@@ -174,9 +210,19 @@ if _HAS_NUMBA:
         return found
 
     @_njit(cache=True)
-    def _count_common_groups_from_seq_nb(seqs, row, length, k, lookup_start,
-                                         lookup_count, group_arr, seen_group,
-                                         counted_group, group_counts, epoch):
+    def _count_common_groups_from_seq_nb(
+        seqs,
+        row,
+        length,
+        k,
+        lookup_start,
+        lookup_count,
+        group_arr,
+        seen_group,
+        counted_group,
+        group_counts,
+        epoch,
+    ):
         mask = np.uint32((1 << (2 * k)) - 1)
         cur = np.uint32(0)
         valid = 0
@@ -204,9 +250,18 @@ if _HAS_NUMBA:
         return found
 
     @_njit(cache=True)
-    def _observe_common_entries_from_seq_nb(seqs, row, length, k, lookup_start,
-                                            lookup_count, group_arr, counted_group,
-                                            observed_entries, epoch):
+    def _observe_common_entries_from_seq_nb(
+        seqs,
+        row,
+        length,
+        k,
+        lookup_start,
+        lookup_count,
+        group_arr,
+        counted_group,
+        observed_entries,
+        epoch,
+    ):
         mask = np.uint32((1 << (2 * k)) - 1)
         cur = np.uint32(0)
         valid = 0
@@ -231,33 +286,74 @@ if _HAS_NUMBA:
                     observed_entries[entry_idx] = True
 
     @_njit(cache=True)
-    def _count_pair_batch_dense_nb(seq1_batch, len1_batch, seq2_batch, len2_batch,
-                                   n_pairs, k, lookup_start, lookup_count,
-                                   group_arr, group_counts, observed_entries,
-                                   seen_group, counted_group, epoch_start,
-                                   emit_neomers):
+    def _count_pair_batch_dense_nb(
+        seq1_batch,
+        len1_batch,
+        seq2_batch,
+        len2_batch,
+        n_pairs,
+        k,
+        lookup_start,
+        lookup_count,
+        group_arr,
+        group_counts,
+        observed_entries,
+        seen_group,
+        counted_group,
+        epoch_start,
+        emit_neomers,
+    ):
         epoch = np.uint32(epoch_start)
         for pair_idx in range(n_pairs):
             seen_any = _mark_groups_from_seq_nb(
-                seq1_batch, pair_idx, int(len1_batch[pair_idx]), k,
-                lookup_start, lookup_count, group_arr, seen_group, epoch,
+                seq1_batch,
+                pair_idx,
+                int(len1_batch[pair_idx]),
+                k,
+                lookup_start,
+                lookup_count,
+                group_arr,
+                seen_group,
+                epoch,
             )
             if seen_any:
                 counted_any = _count_common_groups_from_seq_nb(
-                    seq2_batch, pair_idx, int(len2_batch[pair_idx]), k,
-                    lookup_start, lookup_count, group_arr, seen_group,
-                    counted_group, group_counts, epoch,
+                    seq2_batch,
+                    pair_idx,
+                    int(len2_batch[pair_idx]),
+                    k,
+                    lookup_start,
+                    lookup_count,
+                    group_arr,
+                    seen_group,
+                    counted_group,
+                    group_counts,
+                    epoch,
                 )
                 if emit_neomers and counted_any:
                     _observe_common_entries_from_seq_nb(
-                        seq1_batch, pair_idx, int(len1_batch[pair_idx]), k,
-                        lookup_start, lookup_count, group_arr, counted_group,
-                        observed_entries, epoch,
+                        seq1_batch,
+                        pair_idx,
+                        int(len1_batch[pair_idx]),
+                        k,
+                        lookup_start,
+                        lookup_count,
+                        group_arr,
+                        counted_group,
+                        observed_entries,
+                        epoch,
                     )
                     _observe_common_entries_from_seq_nb(
-                        seq2_batch, pair_idx, int(len2_batch[pair_idx]), k,
-                        lookup_start, lookup_count, group_arr, counted_group,
-                        observed_entries, epoch,
+                        seq2_batch,
+                        pair_idx,
+                        int(len2_batch[pair_idx]),
+                        k,
+                        lookup_start,
+                        lookup_count,
+                        group_arr,
+                        counted_group,
+                        observed_entries,
+                        epoch,
                     )
             epoch += np.uint32(1)
         return epoch
@@ -266,12 +362,13 @@ if _HAS_NUMBA:
 def _bloom_h1_h2_py(val: int, seed: int) -> tuple[int, int]:
     """Compute the two base hashes for double-hashing (pure-Python fallback)."""
     h1 = _mix64_py(val ^ seed)
-    h2 = _mix64_py((val + 0x9e3779b97f4a7c15) ^ seed) | 1
+    h2 = _mix64_py((val + 0x9E3779B97F4A7C15) ^ seed) | 1
     return h1, h2
 
 
-def _bloom_query_mask_intmix_py(queries: np.ndarray, data: np.ndarray,
-                                n_bits: int, n_hashes: int, seed: int) -> np.ndarray:
+def _bloom_query_mask_intmix_py(
+    queries: np.ndarray, data: np.ndarray, n_bits: int, n_hashes: int, seed: int
+) -> np.ndarray:
     out = np.empty(len(queries), dtype=bool)
     for q_idx, q in enumerate(queries):
         h1, h2 = _bloom_h1_h2_py(int(q), seed)
@@ -285,8 +382,9 @@ def _bloom_query_mask_intmix_py(queries: np.ndarray, data: np.ndarray,
     return out
 
 
-def _bloom_set_many_intmix_py(kmers: np.ndarray, data: np.ndarray,
-                              n_bits: int, n_hashes: int, seed: int) -> None:
+def _bloom_set_many_intmix_py(
+    kmers: np.ndarray, data: np.ndarray, n_bits: int, n_hashes: int, seed: int
+) -> None:
     for q in kmers:
         h1, h2 = _bloom_h1_h2_py(int(q), seed)
         for i in range(n_hashes):
@@ -298,7 +396,7 @@ def build_bloom_intmix(kmers: np.ndarray, n_bits: int, n_hashes: int, seed: int)
     """Build an int-mixer bloom byte string for uint32 k-mers."""
     data = np.zeros((n_bits + 7) // 8, dtype=np.uint8)
     if len(kmers):
-        kmers = np.asarray(kmers, dtype='<u4')
+        kmers = np.asarray(kmers, dtype="<u4")
         if _HAS_NUMBA:
             _bloom_set_many_intmix_nb(kmers, data, n_bits, n_hashes, seed)
         else:
@@ -307,13 +405,19 @@ def build_bloom_intmix(kmers: np.ndarray, n_bits: int, n_hashes: int, seed: int)
 
 
 class _Bloom:
-    __slots__ = ('data', 'data_arr', 'n_bits', 'n_hashes', 'seed', 'hash_func')
+    __slots__ = ("data", "data_arr", "n_bits", "n_hashes", "seed", "hash_func")
 
-    def __init__(self, data: bytearray, n_hashes: int, seed: int,
-                 n_bits: int | None = None, hash_func: str = 'intmix64-v1'):
+    def __init__(
+        self,
+        data: bytearray,
+        n_hashes: int,
+        seed: int,
+        n_bits: int | None = None,
+        hash_func: str = "intmix64-v1",
+    ):
         if len(data) == 0:
             raise ValueError("bloom data must be non-empty")
-        if hash_func != 'intmix64-v1':
+        if hash_func != "intmix64-v1":
             raise ValueError(f"unsupported bloom hash '{hash_func}'")
         if n_bits is None:
             raise ValueError("intmix64-v1 bloom requires exact m_bits metadata")
@@ -330,12 +434,18 @@ class _Bloom:
             return np.empty(0, dtype=bool)
         if _HAS_NUMBA:
             return _bloom_query_mask_intmix_nb(
-                np.asarray(queries, dtype='<u4'), self.data_arr,
-                self.n_bits, self.n_hashes, self.seed,
+                np.asarray(queries, dtype="<u4"),
+                self.data_arr,
+                self.n_bits,
+                self.n_hashes,
+                self.seed,
             )
         return _bloom_query_mask_intmix_py(
-            np.asarray(queries, dtype='<u4'), self.data_arr,
-            self.n_bits, self.n_hashes, self.seed,
+            np.asarray(queries, dtype="<u4"),
+            self.data_arr,
+            self.n_bits,
+            self.n_hashes,
+            self.seed,
         )
 
 
@@ -345,9 +455,13 @@ def _check_ndb_bounds(hdr, fsize: int):
     if kmer_end > fsize:
         raise SystemExit(f"ndb corrupt: kmer_array_offset {hdr.kmer_off} exceeds file size {fsize}")
     if hdr.group_off + hdr.n_entries * 2 > fsize:
-        raise SystemExit(f"ndb corrupt: group_array_offset {hdr.group_off} exceeds file size {fsize}")
+        raise SystemExit(
+            f"ndb corrupt: group_array_offset {hdr.group_off} exceeds file size {fsize}"
+        )
     if hdr.group_off < kmer_end:
-        raise SystemExit(f"ndb corrupt: group_array_offset {hdr.group_off} overlaps kmer array (end={kmer_end})")
+        raise SystemExit(
+            f"ndb corrupt: group_array_offset {hdr.group_off} overlaps kmer array (end={kmer_end})"
+        )
     if 64 + hdr.cat_bytes + hdr.bloom_bytes > hdr.kmer_off:
         raise SystemExit(
             f"ndb corrupt: catalog+bloom region ({64 + hdr.cat_bytes + hdr.bloom_bytes})"
@@ -360,7 +474,7 @@ def _parse_header(mm, path: str):
     try:
         hdr = _Header._make(HEADER_STRUCT.unpack_from(mm, 0))
     except struct.error as e:
-        raise SystemExit(f"'{path}' is too small to be a valid .ndb file: {e}")
+        raise SystemExit(f"'{path}' is too small to be a valid .ndb file: {e}") from e
     if hdr.magic != MAGIC:
         raise SystemExit(f"Not a valid .ndb file: {path}")
     if hdr.ver_maj != 1:
@@ -378,14 +492,14 @@ def _parse_header(mm, path: str):
 def _load_catalog(mm, hdr):
     """Parse and validate catalog JSON from mmap; raises SystemExit on format error."""
     try:
-        cat_json = bytes(mm[64:64 + hdr.cat_bytes]).decode()
+        cat_json = bytes(mm[64 : 64 + hdr.cat_bytes]).decode()
     except UnicodeDecodeError as e:
-        raise SystemExit(f"ndb corrupt: catalog is not valid UTF-8: {e}")
+        raise SystemExit(f"ndb corrupt: catalog is not valid UTF-8: {e}") from e
     try:
         cat = json.loads(cat_json)
     except json.JSONDecodeError as e:
-        raise SystemExit(f"ndb corrupt: unparseable catalog JSON: {e}")
-    n_catalog_groups = len(cat.get('groups', []))
+        raise SystemExit(f"ndb corrupt: unparseable catalog JSON: {e}") from e
+    n_catalog_groups = len(cat.get("groups", []))
     if n_catalog_groups != hdr.n_groups:
         raise SystemExit(
             f"ndb corrupt: header declares {hdr.n_groups} groups but catalog has {n_catalog_groups}"
@@ -397,19 +511,19 @@ def _load_bloom_filter(mm, hdr, cat):
     """Build _Bloom from mmap if bloom present, else None; raises SystemExit on unsupported format."""
     if not hdr.bloom_bytes:
         return None
-    bp = cat.get('bloom_params', {})
-    hash_func = bp.get('hash_func')
-    if hash_func != 'intmix64-v1':
+    bp = cat.get("bloom_params", {})
+    hash_func = bp.get("hash_func")
+    if hash_func != "intmix64-v1":
         raise SystemExit(
             f"Unsupported legacy bloom hash '{hash_func or 'unknown'}'; "
             "rebuild this .ndb with the current builder"
         )
     bloom_start = 64 + hdr.cat_bytes
     return _Bloom(
-        bytearray(mm[bloom_start:bloom_start + hdr.bloom_bytes]),
-        bp.get('n_hashes', 7),
-        bp.get('seed', 42),
-        bp.get('m_bits'),
+        bytearray(mm[bloom_start : bloom_start + hdr.bloom_bytes]),
+        bp.get("n_hashes", 7),
+        bp.get("seed", 42),
+        bp.get("m_bits"),
         hash_func,
     )
 
@@ -433,22 +547,33 @@ def _build_dense_lookup(kmer_arr: np.ndarray, k: int) -> tuple[np.ndarray, np.nd
 
 class NmerDB:
     __slots__ = (
-        'k', 'kmer_arr', 'group_arr', 'bloom', 'catalog',
-        'flags', 'source_crc32', 'build_timestamp', 'n_unique',
-        'lookup_start', 'lookup_count', 'lookup_space_size', 'lookup_bytes',
-        '_mm', '_fh',
+        "k",
+        "kmer_arr",
+        "group_arr",
+        "bloom",
+        "catalog",
+        "flags",
+        "source_crc32",
+        "build_timestamp",
+        "n_unique",
+        "lookup_start",
+        "lookup_count",
+        "lookup_space_size",
+        "lookup_bytes",
+        "_mm",
+        "_fh",
     )
 
     def __init__(self, path: str, preload: bool = True, dense: bool = True):
         try:
-            self._fh = open(path, 'rb')
+            self._fh = open(path, "rb")
         except (FileNotFoundError, PermissionError, OSError) as e:
-            raise SystemExit(f"Cannot open .ndb file: {e}")
+            raise SystemExit(f"Cannot open .ndb file: {e}") from e
         try:
             self._mm = mmap.mmap(self._fh.fileno(), 0, access=mmap.ACCESS_READ)
         except (ValueError, OSError) as e:
             self._fh.close()
-            raise SystemExit(f"Cannot mmap '{path}': {e}")
+            raise SystemExit(f"Cannot mmap '{path}': {e}") from e
         try:
             hdr = _parse_header(self._mm, path)
             cat = _load_catalog(self._mm, hdr)
@@ -458,14 +583,20 @@ class NmerDB:
             self.source_crc32 = hdr.source_crc32
             self.build_timestamp = hdr.build_timestamp
             self.n_unique = hdr.n_unique
-            self.catalog = {g['id']: g for g in cat['groups']}
-            self.kmer_arr = np.frombuffer(self._mm, dtype='<u4', count=hdr.n_entries, offset=hdr.kmer_off)
-            self.group_arr = np.frombuffer(self._mm, dtype='<u2', count=hdr.n_entries, offset=hdr.group_off)
+            self.catalog = {g["id"]: g for g in cat["groups"]}
+            self.kmer_arr = np.frombuffer(
+                self._mm, dtype="<u4", count=hdr.n_entries, offset=hdr.kmer_off
+            )
+            self.group_arr = np.frombuffer(
+                self._mm, dtype="<u2", count=hdr.n_entries, offset=hdr.group_off
+            )
             if preload:
                 self.kmer_arr = self.kmer_arr.copy()
                 self.group_arr = self.group_arr.copy()
             if dense:
-                self.lookup_start, self.lookup_count, self.lookup_space_size = _build_dense_lookup(self.kmer_arr, self.k)
+                self.lookup_start, self.lookup_count, self.lookup_space_size = _build_dense_lookup(
+                    self.kmer_arr, self.k
+                )
                 self.lookup_bytes = self.lookup_start.nbytes + self.lookup_count.nbytes
             else:
                 self.lookup_start = None
@@ -478,7 +609,7 @@ class NmerDB:
             raise
 
     def close(self):
-        self.kmer_arr = None   # release mmap buffer reference before closing
+        self.kmer_arr = None  # release mmap buffer reference before closing
         self.group_arr = None
         self.lookup_start = None
         self.lookup_count = None
@@ -498,7 +629,7 @@ def sliding_kmers(seq: str | None, k: int) -> np.ndarray:
     Lookup deduplicates these per-read query arrays before bloom/search.
     """
     if seq is None:
-        return np.empty(0, dtype='<u4')
+        return np.empty(0, dtype="<u4")
     mask = (1 << (2 * k)) - 1
     cur = valid = 0
     out = []
@@ -511,7 +642,7 @@ def sliding_kmers(seq: str | None, k: int) -> np.ndarray:
         valid += 1
         if valid >= k:
             out.append(cur)
-    return np.array(out, dtype='<u4')
+    return np.array(out, dtype="<u4")
 
 
 def _scan_hits(queries: np.ndarray, db: NmerDB):
@@ -528,7 +659,7 @@ def _scan_hits(queries: np.ndarray, db: NmerDB):
     if len(queries) == 0:
         return
     n = len(db.kmer_arr)
-    idxs = np.searchsorted(db.kmer_arr, queries, side='left')
+    idxs = np.searchsorted(db.kmer_arr, queries, side="left")
     # Clamp out-of-range indices to 0 for safe indexing; equality check filters them out.
     safe = np.where(idxs < n, idxs, 0)
     valid = (idxs < n) & (db.kmer_arr[safe] == queries)
@@ -553,20 +684,41 @@ def lookup(queries: np.ndarray, db: NmerDB) -> set:
     return {gid for _kmer, gid in _scan_hits(queries, db)}
 
 
-def process_pair_batch_dense(seq1_batch: np.ndarray, len1_batch: np.ndarray,
-                             seq2_batch: np.ndarray, len2_batch: np.ndarray,
-                             n_pairs: int, db: NmerDB, group_counts: np.ndarray,
-                             observed_entries: np.ndarray, seen_group: np.ndarray,
-                             counted_group: np.ndarray, epoch_start: int,
-                             emit_neomers: bool) -> int:
+def process_pair_batch_dense(
+    seq1_batch: np.ndarray,
+    len1_batch: np.ndarray,
+    seq2_batch: np.ndarray,
+    len2_batch: np.ndarray,
+    n_pairs: int,
+    db: NmerDB,
+    group_counts: np.ndarray,
+    observed_entries: np.ndarray,
+    seen_group: np.ndarray,
+    counted_group: np.ndarray,
+    epoch_start: int,
+    emit_neomers: bool,
+) -> int:
     """Count a batch of read pairs using direct-address dense lookup tables."""
     if not _HAS_NUMBA:
         raise SystemExit("Numba is required for dense batched counting")
     if db.lookup_start is None or db.lookup_count is None:
         raise SystemExit("dense lookup tables are not loaded")
-    return int(_count_pair_batch_dense_nb(
-        seq1_batch, len1_batch, seq2_batch, len2_batch, n_pairs,
-        db.k, db.lookup_start, db.lookup_count, db.group_arr,
-        group_counts, observed_entries, seen_group, counted_group,
-        epoch_start, emit_neomers,
-    ))
+    return int(
+        _count_pair_batch_dense_nb(
+            seq1_batch,
+            len1_batch,
+            seq2_batch,
+            len2_batch,
+            n_pairs,
+            db.k,
+            db.lookup_start,
+            db.lookup_count,
+            db.group_arr,
+            group_counts,
+            observed_entries,
+            seen_group,
+            counted_group,
+            epoch_start,
+            emit_neomers,
+        )
+    )

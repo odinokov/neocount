@@ -15,7 +15,7 @@ pip install pysam numpy numba
 ```
 
 `numba` accelerates the dense in-memory lookup and batched read-pair counting
-path used by `count_neomers.py`.
+in `count_neomers.py`.
 
 
 ## Build the index
@@ -114,7 +114,7 @@ specific = df[df['af_bin'] == 0]   # AF < 0.001, lowest germline contamination r
 A run summary is printed to stderr on completion:
 
 ```
-v0.1  db=neomers_15.ndb  k=15  norm=chr2q+chr19p
+v0.2  db=neomers_15.ndb  k=15  norm=chr2q+chr19p
 AND logic: group counted only when neomers found in BOTH mates
 reads=250,000,000  pairs=124,800,000  tlen_filtered=14,200,000  evicted=0 (0.0%)  norm_reads=18,500,000  elapsed=312.4s
 ```

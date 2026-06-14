@@ -23,7 +23,6 @@ from pathlib import Path
 import polars as pl
 from tqdm import tqdm
 
-
 AF_BINS = tuple(range(6))
 KEY_COLUMNS = ["sample", "bam", "db", "k"]
 INPUT_COLUMNS = [
@@ -43,8 +42,7 @@ SCALE = 1_000_000.0
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Summarize one-level neocount *.tsv reports into a harmonized "
-            "CSV feature matrix."
+            "Summarize one-level neocount *.tsv reports into a harmonized CSV feature matrix."
         )
     )
     parser.add_argument("path", type=Path, help="Directory containing *.tsv files")
@@ -109,11 +107,7 @@ def validate_frame(df: pl.DataFrame, tsv_path: Path) -> None:
     if null_required:
         raise ValueError(f"{tsv_path} has missing required values")
 
-    bad_bins = (
-        df.filter(~pl.col("af_bin").is_in(AF_BINS))
-        .select("af_bin")
-        .unique()
-    )
+    bad_bins = df.filter(~pl.col("af_bin").is_in(AF_BINS)).select("af_bin").unique()
     if bad_bins.height:
         values = ", ".join(str(v) for v in bad_bins.get_column("af_bin").to_list())
         raise ValueError(f"{tsv_path} has unsupported af_bin value(s): {values}")
@@ -143,11 +137,7 @@ def extend_ordered(values: list[str], seen: set[str], new_values: list[str]) -> 
 def summarize_dimension(df: pl.DataFrame, dimension: str) -> pl.DataFrame:
     return (
         df.with_columns(
-            (
-                pl.col(dimension)
-                + pl.lit("_")
-                + pl.col("af_bin").cast(pl.String)
-            ).alias("feature")
+            (pl.col(dimension) + pl.lit("_") + pl.col("af_bin").cast(pl.String)).alias("feature")
         )
         .group_by(KEY_COLUMNS + ["norm_reads", "feature"])
         .agg(pl.col("pair_count").sum().alias("pair_count"))
@@ -174,9 +164,7 @@ def summarize_file(tsv_path: Path) -> tuple[pl.DataFrame, list[str], list[str]]:
 def build_feature_order(organs: list[str], variant_classes: list[str]) -> list[str]:
     organ_features = [f"{organ}_{af_bin}" for organ in organs for af_bin in AF_BINS]
     variant_features = [
-        f"{variant_class}_{af_bin}"
-        for variant_class in variant_classes
-        for af_bin in AF_BINS
+        f"{variant_class}_{af_bin}" for variant_class in variant_classes for af_bin in AF_BINS
     ]
 
     all_features = organ_features + variant_features
@@ -189,20 +177,14 @@ def build_feature_order(organs: list[str], variant_classes: list[str]) -> list[s
     return all_features
 
 
-def validate_global_norm_reads(summary: pl.DataFrame) -> None:
-    conflicts = (
-        summary.group_by(KEY_COLUMNS)
-        .agg(pl.col("norm_reads").n_unique().alias("norm_reads_values"))
-        .filter(pl.col("norm_reads_values") > 1)
-    )
-    if conflicts.height:
-        raise SystemExit("conflicting norm_reads across files for at least one sample/bam/db/k")
-
-
 def build_wide_table(summary: pl.DataFrame, feature_order: list[str]) -> pl.DataFrame:
-    validate_global_norm_reads(summary)
-
-    norms = summary.group_by(KEY_COLUMNS).agg(pl.col("norm_reads").first())
+    norms = summary.group_by(KEY_COLUMNS).agg(
+        pl.col("norm_reads").first().alias("norm_reads"),
+        pl.col("norm_reads").n_unique().alias("_norm_reads_values"),
+    )
+    if norms.filter(pl.col("_norm_reads_values") > 1).height:
+        raise SystemExit("conflicting norm_reads across files for at least one sample/bam/db/k")
+    norms = norms.drop("_norm_reads_values")
     normalized = (
         summary.group_by(KEY_COLUMNS + ["feature"])
         .agg(pl.col("pair_count").sum().alias("pair_count"))
@@ -229,8 +211,7 @@ def build_wide_table(summary: pl.DataFrame, feature_order: list[str]) -> pl.Data
         wide = wide.with_columns(pl.lit(0.0).alias(name) for name in missing_features)
 
     return wide.select(
-        KEY_COLUMNS
-        + [pl.col(name).fill_null(0.0).alias(name) for name in feature_order]
+        KEY_COLUMNS + [pl.col(name).fill_null(0.0).alias(name) for name in feature_order]
     ).sort(KEY_COLUMNS)
 
 
@@ -263,7 +244,7 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except BrokenPipeError:
-        raise SystemExit(1)
+        raise SystemExit(1) from None
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(1) from None

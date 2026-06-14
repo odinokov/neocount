@@ -16,15 +16,15 @@ from pathlib import Path
 
 import numpy as np
 
-from ndb import (MAGIC, HEADER_STRUCT, AF_BIN_META, encode_kmer, af_to_bin,
-                 normalize_variant_class)
+from ndb import AF_BIN_META, HEADER_STRUCT, MAGIC, af_to_bin, encode_kmer, normalize_variant_class
 
-_VERSION = 'v0.2'
-_CHUNK = 5_000_000   # rows per numpy chunk during streaming
+_VERSION = "v0.2"
+_CHUNK = 5_000_000  # rows per numpy chunk during streaming
 
 
 class _CRC32Reader:
     """Binary wrapper that accumulates CRC32 of all bytes read through it."""
+
     def __init__(self, fh):
         self._fh = fh
         self.crc32 = 0
@@ -45,10 +45,10 @@ class _CRC32Reader:
         return self._fh.readable()
 
     def writable(self):
-        return self._fh.writable() if hasattr(self._fh, 'writable') else False
+        return self._fh.writable() if hasattr(self._fh, "writable") else False
 
     def seekable(self):
-        return self._fh.seekable() if hasattr(self._fh, 'seekable') else False
+        return self._fh.seekable() if hasattr(self._fh, "seekable") else False
 
     @property
     def closed(self):
@@ -58,7 +58,7 @@ class _CRC32Reader:
         return self._fh.close()
 
     def flush(self):
-        if hasattr(self._fh, 'flush'):
+        if hasattr(self._fh, "flush"):
             self._fh.flush()
 
 
@@ -67,8 +67,8 @@ def _open_csv(tar_path: str):
 
     Caller is responsible for closing tf.  CRC32 accumulates as rows are read.
     """
-    tf = tarfile.open(tar_path, 'r:gz')
-    members = [m for m in tf.getmembers() if m.name.endswith('.csv')]
+    tf = tarfile.open(tar_path, "r:gz")
+    members = [m for m in tf.getmembers() if m.name.endswith(".csv")]
     if len(members) == 0:
         tf.close()
         raise SystemExit(f"No .csv member found in {tar_path}")
@@ -81,7 +81,7 @@ def _open_csv(tar_path: str):
         tf.close()
         raise SystemExit(f"Cannot extract .csv member from {tar_path} (symlink not supported)")
     crc_reader = _CRC32Reader(raw_fh)
-    text_wrapper = io.TextIOWrapper(crc_reader, encoding='utf-8')
+    text_wrapper = io.TextIOWrapper(crc_reader, encoding="utf-8")
     reader = csv.reader(text_wrapper)
     return tf, crc_reader, reader
 
@@ -101,7 +101,7 @@ def _process_rows(reader, k: int, first_row=None):
     group_dict = {}
     n_rows = n_skipped_col = n_skipped_k = n_skipped_base = n_valid = 0
 
-    buf = np.empty(_CHUNK, dtype=[('k', '<u4'), ('g', '<u2')])
+    buf = np.empty(_CHUNK, dtype=[("k", "<u4"), ("g", "<u2")])
     n_buf = 0
     chunks = []
 
@@ -121,9 +121,9 @@ def _process_rows(reader, k: int, first_row=None):
             n_skipped_base += 1
             continue
 
-        ct  = row[1].strip()
+        ct = row[1].strip()
         org = row[2].strip()
-        vc  = normalize_variant_class(row[4].strip())
+        vc = normalize_variant_class(row[4].strip())
         af_bin = af_to_bin(row[5].strip())
 
         key = (ct, org, vc, af_bin)
@@ -136,7 +136,7 @@ def _process_rows(reader, k: int, first_row=None):
         n_buf += 1
         n_valid += 1
         if n_valid % _log_step == 0:
-            print(f"\r  {n_valid:,} k-mers read...", end='', file=sys.stderr, flush=True)
+            print(f"\r  {n_valid:,} k-mers read...", end="", file=sys.stderr, flush=True)
         if n_buf == _CHUNK:
             chunks.append(buf.copy())
             n_buf = 0
@@ -147,10 +147,14 @@ def _process_rows(reader, k: int, first_row=None):
     if n_valid > 0:
         print(f"\r  {n_valid:,} k-mers read", file=sys.stderr)
 
-    arr = np.concatenate(chunks) if chunks else np.empty(0, dtype=[('k', '<u4'), ('g', '<u2')])
+    arr = np.concatenate(chunks) if chunks else np.empty(0, dtype=[("k", "<u4"), ("g", "<u2")])
     chunks.clear()
-    stats = dict(n_rows=n_rows, n_skipped_col=n_skipped_col,
-                 n_skipped_k=n_skipped_k, n_skipped_base=n_skipped_base)
+    stats = dict(
+        n_rows=n_rows,
+        n_skipped_col=n_skipped_col,
+        n_skipped_k=n_skipped_k,
+        n_skipped_base=n_skipped_base,
+    )
     return arr, group_dict, stats
 
 
@@ -161,19 +165,21 @@ def _remap_and_sort(arr, group_dict: dict):
     canonical_groups: {canonical_gid: (ct, org, vc, af_bin)}
     """
     if len(group_dict) > 65535:
-        raise SystemExit(f"Too many groups ({len(group_dict)}); uint16 group IDs support at most 65535")
+        raise SystemExit(
+            f"Too many groups ({len(group_dict)}); uint16 group IDs support at most 65535"
+        )
     sorted_keys = sorted(group_dict)
     remap = np.array([group_dict[k] for k in sorted_keys], dtype=np.uint16)
     inv = np.empty(len(remap), dtype=np.uint16)
     inv[remap] = np.arange(len(remap), dtype=np.uint16)
-    arr['g'][:] = inv[arr['g']]
+    arr["g"][:] = inv[arr["g"]]
 
-    arr.sort(order=('k', 'g'))
+    arr.sort(order=("k", "g"))
 
     n_dup = 0
     if len(arr) > 1:
         mask = np.ones(len(arr), dtype=bool)
-        mask[1:] = (arr['k'][1:] != arr['k'][:-1]) | (arr['g'][1:] != arr['g'][:-1])
+        mask[1:] = (arr["k"][1:] != arr["k"][:-1]) | (arr["g"][1:] != arr["g"][:-1])
         n_dup = int((~mask).sum())
         arr = arr[mask]
 
@@ -196,57 +202,75 @@ def _compute_group_stats(kmer_arr, group_arr, n_groups: int, unique_kmers, kmer_
     return n_kmers, n_exclusive
 
 
-def _build_catalog_json(in_path: str, canonical_groups: dict, build_ts: int,
-                        n_rows_raw: int, process_stats: dict, build_stats: dict) -> bytes:
+def _build_catalog_json(
+    in_path: str,
+    canonical_groups: dict,
+    build_ts: int,
+    n_rows_raw: int,
+    process_stats: dict,
+    build_stats: dict,
+) -> bytes:
     """Serialise group catalog + build metadata to JSON bytes."""
-    n_kmers_arr = build_stats['n_kmers']
-    n_excl_arr = build_stats['n_exclusive']
+    n_kmers_arr = build_stats["n_kmers"]
+    n_excl_arr = build_stats["n_exclusive"]
 
     group_list = [
         {
-            'id': gid,
-            'cancer_type': ct,
-            'organ': org,
-            'variant_class': vc,
-            'af_bin': af_bin,
-            'n_kmers': int(n_kmers_arr[gid]),
-            'n_exclusive_kmers': int(n_excl_arr[gid]),
+            "id": gid,
+            "cancer_type": ct,
+            "organ": org,
+            "variant_class": vc,
+            "af_bin": af_bin,
+            "n_kmers": int(n_kmers_arr[gid]),
+            "n_exclusive_kmers": int(n_excl_arr[gid]),
         }
         for gid, (ct, org, vc, af_bin) in sorted(canonical_groups.items())
     ]
 
     try:
-        numba_ver = metadata.version('numba')
+        numba_ver = metadata.version("numba")
     except metadata.PackageNotFoundError:
-        numba_ver = 'absent'
+        numba_ver = "absent"
     catalog = {
-        'af_bins': AF_BIN_META,
-        'groups': group_list,
-        'metadata': {
-            'build_python': platform.python_version(),
-            'build_timestamp': build_ts,
-            'n_duplicates_collapsed': process_stats['n_dup'],
-            'n_rows_raw': n_rows_raw,
-            'n_skipped_invalid_base': process_stats['n_skipped_base'],
-            'n_skipped_wrong_k': process_stats['n_skipped_k'],
-            'numba_version': numba_ver,
-            'numpy_version': np.__version__,
-            'platform': platform.system() + '/' + platform.machine(),
-            'source_filename': Path(in_path).name,
+        "af_bins": AF_BIN_META,
+        "groups": group_list,
+        "metadata": {
+            "build_python": platform.python_version(),
+            "build_timestamp": build_ts,
+            "n_duplicates_collapsed": process_stats["n_dup"],
+            "n_rows_raw": n_rows_raw,
+            "n_skipped_invalid_base": process_stats["n_skipped_base"],
+            "n_skipped_wrong_k": process_stats["n_skipped_k"],
+            "numba_version": numba_ver,
+            "numpy_version": np.__version__,
+            "platform": platform.system() + "/" + platform.machine(),
+            "source_filename": Path(in_path).name,
         },
     }
-    return json.dumps(catalog, sort_keys=True, separators=(',', ':')).encode()
+    return json.dumps(catalog, sort_keys=True, separators=(",", ":")).encode()
 
 
-def _write_ndb(out_path: str, in_path: str, k: int, kmer_arr, group_arr, canonical_groups: dict,
-               n_unique: int, source_crc32: int, build_ts: int,
-               n_rows_raw: int, process_stats: dict, build_stats: dict):
+def _write_ndb(
+    out_path: str,
+    in_path: str,
+    k: int,
+    kmer_arr,
+    group_arr,
+    canonical_groups: dict,
+    n_unique: int,
+    source_crc32: int,
+    build_ts: int,
+    n_rows_raw: int,
+    process_stats: dict,
+    build_stats: dict,
+):
     """Serialise arrays and metadata to .ndb format."""
     n_entries = len(kmer_arr)
     n_groups = len(canonical_groups)
 
-    catalog_json = _build_catalog_json(in_path, canonical_groups, build_ts,
-                                       n_rows_raw, process_stats, build_stats)
+    catalog_json = _build_catalog_json(
+        in_path, canonical_groups, build_ts, n_rows_raw, process_stats, build_stats
+    )
 
     catalog_size = len(catalog_json)
     pre_kmer = 64 + catalog_size
@@ -257,21 +281,32 @@ def _write_ndb(out_path: str, in_path: str, k: int, kmer_arr, group_arr, canonic
     flags = 1  # bit 0: sorted
 
     hdr = HEADER_STRUCT.pack(
-        MAGIC, 1, 0, k, 0,
-        n_entries, n_groups, catalog_size, 0,
-        kmer_off, group_off, flags, source_crc32, build_ts, n_unique,
+        MAGIC,
+        1,
+        0,
+        k,
+        0,
+        n_entries,
+        n_groups,
+        catalog_size,
+        0,
+        kmer_off,
+        group_off,
+        flags,
+        source_crc32,
+        build_ts,
+        n_unique,
     )
     if len(hdr) != 64:
         raise SystemExit(f"internal error: HEADER_STRUCT produced {len(hdr)} bytes (expected 64)")
 
-    with open(out_path, 'wb') as f:
+    with open(out_path, "wb") as f:
         f.write(hdr)
         f.write(catalog_json)
-        f.write(b'\x00' * (kmer_off - 64 - catalog_size))
-        f.write(kmer_arr.astype('<u4').tobytes())
-        f.write(b'\x00' * (group_off - kmer_off - kmer_bytes))
-        f.write(group_arr.astype('<u2').tobytes())
-
+        f.write(b"\x00" * (kmer_off - 64 - catalog_size))
+        f.write(kmer_arr.astype("<u4").tobytes())
+        f.write(b"\x00" * (group_off - kmer_off - kmer_bytes))
+        f.write(group_arr.astype("<u2").tobytes())
 
 
 def _fmt_mb(n_bytes):
@@ -281,14 +316,22 @@ def _fmt_mb(n_bytes):
 
 def _default_ndb_path(in_path: str) -> str:
     name = Path(in_path).name
-    for suffix in ('.csv.tar.gz', '.csv.gz', '.csv'):
+    for suffix in (".csv.tar.gz", ".csv.gz", ".csv"):
         if name.endswith(suffix):
-            return str(Path(in_path).with_name(name[:-len(suffix)] + '.ndb'))
-    return str(Path(in_path).with_suffix('.ndb'))
+            return str(Path(in_path).with_name(name[: -len(suffix)] + ".ndb"))
+    return str(Path(in_path).with_suffix(".ndb"))
 
 
-def _print_build_summary(out_path: str, k: int, n_rows_raw: int, n_skipped: int,
-                         n_unique: int, n_entries: int, n_groups: int, elapsed: float):
+def _print_build_summary(
+    out_path: str,
+    k: int,
+    n_rows_raw: int,
+    n_skipped: int,
+    n_unique: int,
+    n_entries: int,
+    n_groups: int,
+    elapsed: float,
+):
     """Print build statistics to stderr."""
     out_size = _fmt_mb(Path(out_path).stat().st_size)
     print(f"  k:             {k}", file=sys.stderr)
@@ -299,7 +342,6 @@ def _print_build_summary(out_path: str, k: int, n_rows_raw: int, n_skipped: int,
     print(f"  groups:        {n_groups:,}", file=sys.stderr)
     print(f"  output:        {Path(out_path).name} ({out_size})", file=sys.stderr)
     print(f"  elapsed:       {int(elapsed // 60)}m {int(elapsed % 60)}s", file=sys.stderr)
-
 
 
 def _run_pipeline(args):
@@ -318,7 +360,9 @@ def _run_pipeline(args):
             next(reader)  # header row
             first_row = next(reader)
         except StopIteration:
-            raise SystemExit(f"Error: '{Path(in_path).name}' is empty or contains only a header row")
+            raise SystemExit(
+                f"Error: '{Path(in_path).name}' is empty or contains only a header row"
+            ) from None
         k = _infer_k(first_row)
         if k not in range(11, 17):
             raise SystemExit(f"Inferred k={k} is not in the supported range [11, 16]")
@@ -327,41 +371,62 @@ def _run_pipeline(args):
         tf.close()
 
     source_crc32 = crc_reader.crc32
-    n_rows_raw = proc_stats['n_rows']
+    n_rows_raw = proc_stats["n_rows"]
 
     arr, canonical_groups, n_dup = _remap_and_sort(arr, group_dict)
-    proc_stats['n_dup'] = n_dup
+    proc_stats["n_dup"] = n_dup
 
-    kmer_arr = arr['k']
-    group_arr = arr['g']
+    kmer_arr = arr["k"]
+    group_arr = arr["g"]
     n_entries = len(arr)
     unique_kmers, kmer_counts = np.unique(kmer_arr, return_counts=True)
     n_unique = len(unique_kmers)
     n_groups = len(canonical_groups)
 
-    n_kmers_arr, n_excl_arr = _compute_group_stats(kmer_arr, group_arr, n_groups, unique_kmers, kmer_counts)
-    build_stats = {'n_kmers': n_kmers_arr, 'n_exclusive': n_excl_arr}
+    n_kmers_arr, n_excl_arr = _compute_group_stats(
+        kmer_arr, group_arr, n_groups, unique_kmers, kmer_counts
+    )
+    build_stats = {"n_kmers": n_kmers_arr, "n_exclusive": n_excl_arr}
 
     build_ts = int(time.time())
-    _write_ndb(out_path, in_path, k, kmer_arr, group_arr, canonical_groups,
-               n_unique, source_crc32, build_ts,
-               n_rows_raw, proc_stats, build_stats)
+    _write_ndb(
+        out_path,
+        in_path,
+        k,
+        kmer_arr,
+        group_arr,
+        canonical_groups,
+        n_unique,
+        source_crc32,
+        build_ts,
+        n_rows_raw,
+        proc_stats,
+        build_stats,
+    )
 
     elapsed = time.time() - t0
     if n_entries == 0:
         print("  WARNING: 0 valid entries — check source CSV and k-mer length", file=sys.stderr)
-    _print_build_summary(out_path, k, n_rows_raw, proc_stats['n_skipped_base'],
-                         n_unique, n_entries, n_groups, elapsed)
+    _print_build_summary(
+        out_path,
+        k,
+        n_rows_raw,
+        proc_stats["n_skipped_base"],
+        n_unique,
+        n_entries,
+        n_groups,
+        elapsed,
+    )
 
 
 def main():
-    ap = argparse.ArgumentParser(description='Build a .ndb index from a neomerDB CSV.tar.gz.')
-    ap.add_argument('input', help='Path to neomers_K.csv.tar.gz')
-    ap.add_argument('-o', '--output', help='Output .ndb path (default: stem.ndb)')
+    ap = argparse.ArgumentParser(description="Build a .ndb index from a neomerDB CSV.tar.gz.")
+    ap.add_argument("input", help="Path to neomers_K.csv.tar.gz")
+    ap.add_argument("-o", "--output", help="Output .ndb path (default: stem.ndb)")
     args = ap.parse_args()
 
     _run_pipeline(args)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
